@@ -38,8 +38,14 @@ const Navbar = ({ user, logout }) => {
                         height: '28px',
                         borderRadius: '8px',
                         background: 'var(--brand-gradient)',
-                        boxShadow: '0 4px 10px rgba(255, 107, 107, 0.3)'
-                    }}></div>
+                        boxShadow: '0 4px 10px rgba(255, 107, 107, 0.3)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden'
+                    }}>
+                        <img src="/favicon.png" alt="Everlink logo" style={{ width: '22px', height: '22px', objectFit: 'contain' }} />
+                    </div>
                     Everlink
                 </Link>
                 <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
