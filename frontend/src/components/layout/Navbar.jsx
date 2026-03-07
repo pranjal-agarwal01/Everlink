@@ -39,12 +39,9 @@ const Navbar = ({ user, logout }) => {
                         borderRadius: '8px',
                         background: 'var(--brand-gradient)',
                         boxShadow: '0 4px 10px rgba(255, 107, 107, 0.3)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
                         overflow: 'hidden'
                     }}>
-                        <img src="/favicon.png" alt="Everlink logo" style={{ width: '22px', height: '22px', objectFit: 'contain' }} />
+                        <img src="/favicon.png" alt="Everlink logo" style={{ width: '28px', height: '28px', objectFit: 'cover', display: 'block' }} />
                     </div>
                     Everlink
                 </Link>
