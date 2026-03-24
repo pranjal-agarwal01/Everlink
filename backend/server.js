@@ -11,6 +11,9 @@ connectDB();
 
 const app = express();
 
+// Trust Render's reverse proxy (required for express-rate-limit and accurate IP detection)
+app.set('trust proxy', 1);
+
 // CORS — allow both the deployed Vercel frontend and localhost dev
 const allowedOrigins = [
     process.env.FRONTEND_URL,

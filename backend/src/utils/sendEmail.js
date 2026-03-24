@@ -20,6 +20,7 @@ const createTransporter = () => {
         host: 'smtp.gmail.com',
         port: 465,
         secure: true,          // SSL — works reliably on Render
+        family: 4,             // Force IPv4 — Render free tier cannot reach IPv6 addresses
         auth: { user: email, pass },
         tls: { rejectUnauthorized: false },
         connectionTimeout: 15000,
