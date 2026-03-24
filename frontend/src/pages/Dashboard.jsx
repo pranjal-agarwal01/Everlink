@@ -4,6 +4,8 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// Short links redirect via the backend (Render), not the Vercel frontend
+const SHORT_BASE = import.meta.env.VITE_SHORT_URL_BASE || API;
 
 const Dashboard = ({ user, logoutUser }) => {
     const [links, setLinks] = useState([]);
@@ -121,10 +123,7 @@ const Dashboard = ({ user, logoutUser }) => {
         });
     };
 
-    const shortUrl = (slug) => {
-        const baseUrl = API.replace(/^https?:\/\//, ''); // Remove http/https for display
-        return `${baseUrl}/${slug}`;
-    };
+    const shortUrl = (slug) => `${SHORT_BASE}/${slug}`;
 
     return (
         <div className="container animate-fade-in">

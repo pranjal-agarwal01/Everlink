@@ -1,71 +1,71 @@
 const nodemailer = require('nodemailer');
+const { resolve4 } = require('dns').promises;
 
-// Reset singleton so a failed connection gets recreated on next attempt
 let _transporter = null;
 
-const createTransporter = () => {
+const buildTransporter = async () => {
     const email = (process.env.SMTP_EMAIL || '').trim();
     const pass  = (process.env.SMTP_PASSWORD || '').trim();
 
     if (!email || !pass) {
-        console.warn('[EMAIL] No SMTP credentials in environment — emails will NOT be sent.');
+        console.warn('[EMAIL] No SMTP credentials in environment. Set SMTP_EMAIL and SMTP_PASSWORD on Render.');
         return null;
     }
 
-    console.log(`[EMAIL] Creating transporter for ${email} on port 465 (SSL)`);
+    // Explicitly resolve smtp.gmail.com to an IPv4 address.
+    // Render free tier cannot reach IPv6 — this sidesteps the OS DNS preference entirely.
+    let smtpHost = 'smtp.gmail.com';
+    try {
+        const [ipv4] = await resolve4('smtp.gmail.com');
+        smtpHost = ipv4;
+        console.log(`[EMAIL] smtp.gmail.com resolved to IPv4: ${smtpHost}`);
+    } catch (dnsErr) {
+        console.warn('[EMAIL] DNS resolve4 failed, using hostname:', dnsErr.message);
+    }
 
-    // Port 465 + secure:true is the most reliable config on cloud hosts like Render.
-    // Port 587 (STARTTLS) is often blocked by cloud providers.
     return nodemailer.createTransport({
-        host: 'smtp.gmail.com',
+        host: smtpHost,
         port: 465,
-        secure: true,          // SSL — works reliably on Render
-        family: 4,             // Force IPv4 — Render free tier cannot reach IPv6 addresses
+        secure: true,
         auth: { user: email, pass },
-        tls: { rejectUnauthorized: false },
+        tls: {
+            rejectUnauthorized: false,
+            servername: 'smtp.gmail.com', // SNI uses hostname even when connecting by IP
+        },
         connectionTimeout: 15000,
-        greetingTimeout:   15000,
-        socketTimeout:     15000,
+        greetingTimeout: 15000,
+        socketTimeout: 15000,
     });
 };
 
 const sendEmail = async (options) => {
     if (!_transporter) {
-        _transporter = createTransporter();
+        _transporter = await buildTransporter();
     }
 
-    if (!_transporter) {
-        // Dev fallback
-        console.log('[EMAIL] Skipping send — no credentials.');
-        return;
-    }
+    if (!_transporter) return;
 
     const fromEmail = (process.env.FROM_EMAIL || process.env.SMTP_EMAIL || '').trim();
     const fromName  = process.env.FROM_NAME || 'Everlink';
 
-    const message = {
-        from: `${fromName} <${fromEmail}>`,
-        to:   options.email,
-        subject: options.subject,
-        text: options.text,
-        html: options.html || `
-            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
-                <h2 style="color:#ff6b6b;margin:0 0 16px">Everlink</h2>
-                <p style="font-size:15px;line-height:1.6">${options.text.replace(/\n/g, '<br>')}</p>
-                <p style="color:#888;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
-            </div>`
-    };
-
     try {
-        const info = await _transporter.sendMail(message);
+        const info = await _transporter.sendMail({
+            from: `${fromName} <${fromEmail}>`,
+            to:   options.email,
+            subject: options.subject,
+            text: options.text,
+            html: options.html || `
+                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+                    <h2 style="color:#ff6b6b;margin:0 0 16px">Everlink</h2>
+                    <p style="font-size:15px;line-height:1.6">${options.text.replace(/\n/g, '<br>')}</p>
+                    <p style="color:#888;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
+                </div>`,
+        });
         console.log(`[EMAIL] Sent to ${options.email} — id: ${info.messageId}`);
     } catch (err) {
-        // Reset singleton so next attempt gets a fresh connection
-        _transporter = null;
-        console.error(`[EMAIL] FAILED to send to ${options.email}`);
-        console.error(`[EMAIL] Error code: ${err.code}`);
-        console.error(`[EMAIL] Error message: ${err.message}`);
-        throw err; // re-throw so caller's .catch() handles it
+        _transporter = null; // reset so next attempt rebuilds with fresh DNS
+        console.error(`[EMAIL] FAILED: ${err.code} — ${err.message}`);
+        throw err;
     }
 };
 

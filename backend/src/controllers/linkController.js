@@ -103,16 +103,17 @@ const deleteLink = async (req, res) => {
 // @access  Public
 const redirectLink = async (req, res) => {
     try {
-        const link = await Link.findOne({ slug: req.params.slug });
+        // Atomic increment — avoids race conditions on concurrent hits
+        const link = await Link.findOneAndUpdate(
+            { slug: req.params.slug },
+            { $inc: { clicks: 1 } },
+            { new: false } // we don't need the updated doc
+        );
 
         if (link) {
-            // Increment clicks
-            link.clicks++;
-            await link.save();
             return res.redirect(302, link.originalUrl);
-        } else {
-            return res.status(404).json({ message: 'Link not found' });
         }
+        return res.status(404).json({ message: 'Link not found' });
     } catch (error) {
         res.status(500).json({ message: 'Server Error' });
     }

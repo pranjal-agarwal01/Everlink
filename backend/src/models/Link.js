@@ -35,7 +35,4 @@ const linkSchema = new mongoose.Schema({
     }
 }, { timestamps: true });
 
-// Ensure slugs are indexed for ultra-fast lookup
-linkSchema.index({ slug: 1 });
-
 module.exports = mongoose.model('Link', linkSchema);
