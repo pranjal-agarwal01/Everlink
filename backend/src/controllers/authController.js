@@ -136,8 +136,17 @@ const verifyEmail = async (req, res) => {
             return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' });
         }
 
-        // Verify OTP hash
-        const isMatch = await user.matchOtp(String(otp).trim());
+        // Verify OTP — support both hashed (new) and plaintext (legacy) OTPs
+        let isMatch = await user.matchOtp(String(otp).trim());
+
+        // Legacy fallback: user registered before bcrypt hashing upgrade
+        if (!isMatch && user.otp && user.otp === String(otp).trim()) {
+            isMatch = true;
+            // Upgrade to hashed OTP immediately
+            const bcrypt = require('bcryptjs');
+            user.otp = await bcrypt.hash(String(otp).trim(), 8);
+        }
+
         if (!isMatch) {
             user.otpAttempts = (user.otpAttempts || 0) + 1;
             if (user.otpAttempts >= 5) {
