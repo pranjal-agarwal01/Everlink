@@ -1,65 +1,71 @@
 const nodemailer = require('nodemailer');
 
-// Singleton transporter — created once, reused for speed
+// Reset singleton so a failed connection gets recreated on next attempt
 let _transporter = null;
 
-const getTransporter = () => {
-    if (_transporter) return _transporter;
+const createTransporter = () => {
+    const email = (process.env.SMTP_EMAIL || '').trim();
+    const pass  = (process.env.SMTP_PASSWORD || '').trim();
 
-    if (!process.env.SMTP_EMAIL || !process.env.SMTP_PASSWORD) {
-        return null; // Dev mode — no real credentials
+    if (!email || !pass) {
+        console.warn('[EMAIL] No SMTP credentials in environment — emails will NOT be sent.');
+        return null;
     }
 
-    _transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || 'smtp.gmail.com',
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: false,
-        pool: true,           // reuse connections across sends
-        maxConnections: 3,
-        auth: {
-            user: process.env.SMTP_EMAIL.trim(),
-            pass: process.env.SMTP_PASSWORD.trim(),
-        },
-        tls: {
-            rejectUnauthorized: false
-        },
-        // Fail fast — don't let a stalled SMTP connection block for minutes
-        connectionTimeout: 10000,  // 10s to establish TCP connection
-        greetingTimeout:   10000,  // 10s for the SMTP greeting
-        socketTimeout:     10000,  // 10s of socket inactivity before giving up
-    });
+    console.log(`[EMAIL] Creating transporter for ${email} on port 465 (SSL)`);
 
-    return _transporter;
+    // Port 465 + secure:true is the most reliable config on cloud hosts like Render.
+    // Port 587 (STARTTLS) is often blocked by cloud providers.
+    return nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,          // SSL — works reliably on Render
+        auth: { user: email, pass },
+        tls: { rejectUnauthorized: false },
+        connectionTimeout: 15000,
+        greetingTimeout:   15000,
+        socketTimeout:     15000,
+    });
 };
 
 const sendEmail = async (options) => {
-    const transporter = getTransporter();
+    if (!_transporter) {
+        _transporter = createTransporter();
+    }
 
-    if (!transporter) {
-        console.log('[DEV] Mock Email — no SMTP credentials. Would have sent:', {
-            to: options.email,
-            subject: options.subject,
-        });
-        if (process.env.NODE_ENV === 'development') {
-            console.log('[DEV] OTP message:', options.text);
-        }
+    if (!_transporter) {
+        // Dev fallback
+        console.log('[EMAIL] Skipping send — no credentials.');
         return;
     }
 
+    const fromEmail = (process.env.FROM_EMAIL || process.env.SMTP_EMAIL || '').trim();
+    const fromName  = process.env.FROM_NAME || 'Everlink';
+
     const message = {
-        from: `${process.env.FROM_NAME || 'Everlink'} <${(process.env.FROM_EMAIL || process.env.SMTP_EMAIL).trim()}>`,
-        to: options.email,
+        from: `${fromName} <${fromEmail}>`,
+        to:   options.email,
         subject: options.subject,
         text: options.text,
-        html: options.html || `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-            <h2 style="color:#ff6b6b">Everlink</h2>
-            <p>${options.text.replace(/\n/g, '<br>')}</p>
-            <p style="color:#888;font-size:12px">If you didn't request this, you can ignore this email.</p>
-        </div>`
+        html: options.html || `
+            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
+                <h2 style="color:#ff6b6b;margin:0 0 16px">Everlink</h2>
+                <p style="font-size:15px;line-height:1.6">${options.text.replace(/\n/g, '<br>')}</p>
+                <p style="color:#888;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
+            </div>`
     };
 
-    const info = await transporter.sendMail(message);
-    console.log('Email sent:', info.messageId);
+    try {
+        const info = await _transporter.sendMail(message);
+        console.log(`[EMAIL] Sent to ${options.email} — id: ${info.messageId}`);
+    } catch (err) {
+        // Reset singleton so next attempt gets a fresh connection
+        _transporter = null;
+        console.error(`[EMAIL] FAILED to send to ${options.email}`);
+        console.error(`[EMAIL] Error code: ${err.code}`);
+        console.error(`[EMAIL] Error message: ${err.message}`);
+        throw err; // re-throw so caller's .catch() handles it
+    }
 };
 
 module.exports = sendEmail;
