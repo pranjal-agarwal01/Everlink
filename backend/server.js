@@ -1,3 +1,6 @@
+// Force IPv4 DNS resolution — Render free tier cannot reach IPv6 endpoints
+require('dns').setDefaultResultOrder('ipv4first');
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
