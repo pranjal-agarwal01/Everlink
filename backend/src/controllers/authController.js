@@ -29,13 +29,13 @@ const hashOtp = async (otp) => {
     return bcrypt.hash(otp, salt);
 };
 
-// Send OTP email helper
-const sendOtpEmail = async (email, otp) => {
-    await sendEmail({
+// Fire-and-forget: sends in background so the HTTP response is instant
+const sendOtpEmailAsync = (email, otp) => {
+    sendEmail({
         email,
         subject: 'Your Everlink Verification Code',
         text: `Your Everlink verification code is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
-    });
+    }).catch((err) => console.error('OTP email failed (background):', err.message));
 };
 
 // --- Controllers ---
@@ -83,15 +83,10 @@ const registerUser = async (req, res) => {
             user = await User.create({ name, email, password, otp: otpHash, otpExpires });
         }
 
-        // Send OTP (don't fail the whole request if email fails)
-        try {
-            await sendOtpEmail(user.email, otp);
-            if (process.env.NODE_ENV !== 'production') {
-                console.log(`[DEV] OTP for ${user.email}: ${otp}`);
-            }
-        } catch (emailErr) {
-            console.error('Failed to send OTP email:', emailErr.message);
-            // Still return success — user can use resend-otp
+        // Fire-and-forget — respond instantly, email arrives in background
+        sendOtpEmailAsync(user.email, otp);
+        if (process.env.NODE_ENV !== 'production') {
+            console.log(`[DEV] OTP for ${user.email}: ${otp}`);
         }
 
         return res.status(201).json({
@@ -203,13 +198,9 @@ const resendOtp = async (req, res) => {
         user.otpLockedUntil = undefined;
         await user.save();
 
-        try {
-            await sendOtpEmail(user.email, otp);
-            if (process.env.NODE_ENV !== 'production') {
-                console.log(`[DEV] Resent OTP for ${user.email}: ${otp}`);
-            }
-        } catch (emailErr) {
-            console.error('Failed to resend OTP email:', emailErr.message);
+        sendOtpEmailAsync(user.email, otp);
+        if (process.env.NODE_ENV !== 'production') {
+            console.log(`[DEV] Resent OTP for ${user.email}: ${otp}`);
         }
 
         return res.status(200).json({ success: true, message: 'A new verification code has been sent to your email.' });
@@ -246,12 +237,10 @@ const loginUser = async (req, res) => {
                 user.otpLockedUntil = undefined;
                 await user.save();
 
-                try {
-                    await sendOtpEmail(user.email, otp);
-                    if (process.env.NODE_ENV !== 'production') {
-                        console.log(`[DEV] OTP (login unverified) for ${user.email}: ${otp}`);
-                    }
-                } catch { }
+                sendOtpEmailAsync(user.email, otp);
+                if (process.env.NODE_ENV !== 'production') {
+                    console.log(`[DEV] OTP (login unverified) for ${user.email}: ${otp}`);
+                }
 
                 return res.status(403).json({
                     success: false,

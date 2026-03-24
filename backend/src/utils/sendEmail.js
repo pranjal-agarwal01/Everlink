@@ -13,14 +13,20 @@ const getTransporter = () => {
     _transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
         port: Number(process.env.SMTP_PORT) || 587,
-        secure: false, // true for port 465, false for 587
+        secure: false,
+        pool: true,           // reuse connections across sends
+        maxConnections: 3,
         auth: {
             user: process.env.SMTP_EMAIL.trim(),
             pass: process.env.SMTP_PASSWORD.trim(),
         },
         tls: {
-            rejectUnauthorized: false // Avoids cert issues on Render
-        }
+            rejectUnauthorized: false
+        },
+        // Fail fast — don't let a stalled SMTP connection block for minutes
+        connectionTimeout: 10000,  // 10s to establish TCP connection
+        greetingTimeout:   10000,  // 10s for the SMTP greeting
+        socketTimeout:     10000,  // 10s of socket inactivity before giving up
     });
 
     return _transporter;
