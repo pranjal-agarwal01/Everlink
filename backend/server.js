@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const connectDB = require('./src/config/db');
 const { redirectLink } = require('./src/controllers/linkController');
 
@@ -10,20 +11,45 @@ connectDB();
 
 const app = express();
 
+// CORS — allow both the deployed Vercel frontend and localhost dev
+const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    'http://localhost:5173',
+    'http://localhost:3000',
+].filter(Boolean); // remove undefined entries
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+        // Allow requests with no origin (Postman, curl, server-to-server)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        callback(new Error(`CORS: origin ${origin} not allowed`));
+    },
     credentials: true
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Rate limit for auth routes: 20 requests per 15 minutes per IP
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: 'Too many requests. Please wait 15 minutes before trying again.'
+    }
+});
+
 // Routes
-app.use('/api/auth', require('./src/routes/authRoutes'));
+app.use('/api/auth', authLimiter, require('./src/routes/authRoutes'));
 app.use('/api/links', require('./src/routes/linkRoutes'));
 
-// The Core Engine Redirect Route (Catch-all for short paths)
+// Core redirect (catch-all for short slugs)
 app.get('/:slug', redirectLink);
 
 app.listen(port, () => {
-    console.log(`Server started on port ${port}`);
+    console.log(`Server running on port ${port} [${process.env.NODE_ENV || 'development'}]`);
 });

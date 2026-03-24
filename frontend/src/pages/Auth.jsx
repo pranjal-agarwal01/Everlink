@@ -1,18 +1,37 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+// Client-side password rules (mirrors backend)
+const validatePassword = (password) => {
+    if (!password || password.length < 8) return 'Password must be at least 8 characters';
+    if (!/[A-Za-z]/.test(password)) return 'Password must contain at least one letter';
+    if (!/\d/.test(password)) return 'Password must contain at least one number';
+    return null;
+};
+
+const RESEND_COOLDOWN = 60; // seconds
+
 const Auth = ({ isLogin, loginUser }) => {
-    const [step, setStep] = useState('FORM'); // 'FORM' or 'VERIFY'
+    const [step, setStep] = useState('FORM'); // 'FORM' | 'VERIFY'
     const [pendingEmail, setPendingEmail] = useState('');
     const [formData, setFormData] = useState({ name: '', email: '', password: '' });
     const [otp, setOtp] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
+    const [info, setInfo] = useState('');
+    const [resendTimer, setResendTimer] = useState(0); // countdown seconds
     const navigate = useNavigate();
+
+    // Resend OTP countdown timer
+    useEffect(() => {
+        if (resendTimer <= 0) return;
+        const id = setTimeout(() => setResendTimer((t) => t - 1), 1000);
+        return () => clearTimeout(id);
+    }, [resendTimer]);
 
     const handleChange = (e) => {
         setFormData((prev) => ({ ...prev, [e.target.id]: e.target.value }));
@@ -20,9 +39,19 @@ const Auth = ({ isLogin, loginUser }) => {
 
     const handleAuthSubmit = async (e) => {
         e.preventDefault();
-        setIsLoading(true);
         setError('');
+        setInfo('');
 
+        // Client-side password validation for signup — before any API call
+        if (!isLogin) {
+            const pwErr = validatePassword(formData.password);
+            if (pwErr) {
+                setError(pwErr);
+                return;
+            }
+        }
+
+        setIsLoading(true);
         try {
             const endpoint = isLogin ? `${API}/api/auth/login` : `${API}/api/auth/register`;
             const body = isLogin
@@ -38,25 +67,29 @@ const Auth = ({ isLogin, loginUser }) => {
             const data = await res.json();
 
             if (!res.ok) {
-                // Handle unverified user during login → show OTP step
+                // Unverified user during login → show OTP step
                 if (res.status === 403 && data.unverified) {
                     setPendingEmail(data.email || formData.email);
                     setStep('VERIFY');
-                    setError(data.message);
+                    setOtp('');
+                    setResendTimer(RESEND_COOLDOWN);
+                    setError('');
+                    setInfo(data.message);
                     return;
                 }
                 throw new Error(data.message || 'Something went wrong');
             }
 
             if (isLogin) {
-                // Login success
-                const userData = { token: data.token, ...data.user };
-                loginUser(userData);
-                navigate('/dashboard');
+                loginUser({ token: data.token, ...data.user });
+                navigate('/dashboard', { replace: true });
             } else {
                 // Register success → show OTP step
                 setPendingEmail(formData.email);
                 setStep('VERIFY');
+                setOtp('');
+                setResendTimer(RESEND_COOLDOWN);
+                setInfo('Verification code sent! Check your inbox (and spam folder).');
             }
         } catch (err) {
             setError(err.message);
@@ -67,12 +100,13 @@ const Auth = ({ isLogin, loginUser }) => {
 
     const handleVerifySubmit = async (e) => {
         e.preventDefault();
-        if (!otp.trim()) {
-            setError('Please enter the OTP');
+        if (!otp.trim() || otp.trim().length < 6) {
+            setError('Please enter the 6-digit code');
             return;
         }
         setIsLoading(true);
         setError('');
+        setInfo('');
 
         try {
             const res = await fetch(`${API}/api/auth/verify`, {
@@ -84,18 +118,42 @@ const Auth = ({ isLogin, loginUser }) => {
             const data = await res.json();
 
             if (!res.ok) {
+                setOtp(''); // Clear stale OTP on failure
                 throw new Error(data.message || 'Verification failed');
             }
 
-            const userData = { token: data.token, ...data.user };
-            loginUser(userData);
-            navigate('/dashboard');
+            loginUser({ token: data.token, ...data.user });
+            navigate('/dashboard', { replace: true });
         } catch (err) {
             setError(err.message);
         } finally {
             setIsLoading(false);
         }
     };
+
+    const handleResendOtp = useCallback(async () => {
+        if (resendTimer > 0 || !pendingEmail) return;
+        setError('');
+        setInfo('');
+
+        try {
+            const res = await fetch(`${API}/api/auth/resend-otp`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: pendingEmail }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setInfo(data.message || 'New code sent!');
+                setOtp('');
+                setResendTimer(RESEND_COOLDOWN);
+            } else {
+                setError(data.message || 'Failed to resend code');
+            }
+        } catch {
+            setError('Network error. Please try again.');
+        }
+    }, [resendTimer, pendingEmail]);
 
     return (
         <div className="auth-wrapper">
@@ -114,29 +172,43 @@ const Auth = ({ isLogin, loginUser }) => {
                     </h2>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem' }}>
                         {step === 'VERIFY'
-                            ? `We sent a 6-digit OTP to `
+                            ? <>We sent a 6-digit code to <strong style={{ color: 'var(--text-primary)' }}>{pendingEmail}</strong></>
                             : isLogin
                                 ? 'Enter your credentials to continue'
                                 : 'Start managing your permanent links for free'}
-
-                        {step === 'VERIFY' && <strong style={{ color: 'var(--text-primary)' }}>{pendingEmail}</strong>}
                     </p>
                 </div>
 
+                {/* Info message (success/notice) */}
+                {info && (
+                    <div style={{
+                        padding: '1rem',
+                        backgroundColor: 'rgba(6, 214, 160, 0.1)',
+                        color: 'var(--success-color, #06d6a0)',
+                        border: '1px solid rgba(6, 214, 160, 0.25)',
+                        borderRadius: '12px',
+                        marginBottom: '1.5rem',
+                        textAlign: 'center',
+                        fontSize: '0.95rem',
+                        fontWeight: 500
+                    }}>
+                        {info}
+                    </div>
+                )}
+
+                {/* Error message */}
                 {error && (
-                    <div
-                        style={{
-                            padding: '1rem',
-                            backgroundColor: 'rgba(239, 71, 111, 0.1)',
-                            color: 'var(--danger-color)',
-                            border: '1px solid rgba(239, 71, 111, 0.2)',
-                            borderRadius: '12px',
-                            marginBottom: '2rem',
-                            textAlign: 'center',
-                            fontSize: '0.95rem',
-                            fontWeight: 500
-                        }}
-                    >
+                    <div style={{
+                        padding: '1rem',
+                        backgroundColor: 'rgba(239, 71, 111, 0.1)',
+                        color: 'var(--danger-color)',
+                        border: '1px solid rgba(239, 71, 111, 0.2)',
+                        borderRadius: '12px',
+                        marginBottom: '1.5rem',
+                        textAlign: 'center',
+                        fontSize: '0.95rem',
+                        fontWeight: 500
+                    }}>
                         {error}
                     </div>
                 )}
@@ -176,6 +248,11 @@ const Auth = ({ isLogin, loginUser }) => {
                             minLength={8}
                             maxLength={100}
                         />
+                        {!isLogin && (
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
+                                Min. 8 characters, must include a letter and a number.
+                            </p>
+                        )}
 
                         <Button
                             type="submit"
@@ -190,7 +267,7 @@ const Auth = ({ isLogin, loginUser }) => {
                 ) : (
                     <form onSubmit={handleVerifySubmit} noValidate>
                         <Input
-                            label="6-Digit OTP Code"
+                            label="6-Digit Verification Code"
                             id="otp"
                             type="text"
                             inputMode="numeric"
@@ -208,16 +285,43 @@ const Auth = ({ isLogin, loginUser }) => {
                             isLoading={isLoading}
                             disabled={isLoading}
                         >
-                            Verify & Log In
+                            Verify &amp; Log In
                         </Button>
+
+                        {/* Resend OTP */}
+                        <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                            {resendTimer > 0 ? (
+                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                    Resend code in <strong>{resendTimer}s</strong>
+                                </p>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={handleResendOtp}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: 'var(--primary-color)',
+                                        cursor: 'pointer',
+                                        fontSize: '0.9rem',
+                                        fontWeight: 600,
+                                        textDecoration: 'underline',
+                                        padding: 0
+                                    }}
+                                >
+                                    Resend verification code
+                                </button>
+                            )}
+                        </div>
+
                         <button
                             type="button"
-                            onClick={() => { setStep('FORM'); setError(''); setOtp(''); }}
+                            onClick={() => { setStep('FORM'); setError(''); setInfo(''); setOtp(''); setResendTimer(0); }}
                             style={{
                                 display: 'block',
                                 width: '100%',
                                 textAlign: 'center',
-                                marginTop: '1rem',
+                                marginTop: '0.75rem',
                                 background: 'none',
                                 border: 'none',
                                 color: 'var(--text-secondary)',
