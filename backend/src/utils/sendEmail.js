@@ -27,14 +27,17 @@ const buildTransporter = async () => {
         host: smtpHost,
         port: 465,
         secure: true,
+        pool: true,           // reuse SMTP connections
+        maxConnections: 3,
+        maxMessages: 100,
         auth: { user: email, pass },
         tls: {
             rejectUnauthorized: false,
             servername: 'smtp.gmail.com', // SNI uses hostname even when connecting by IP
         },
-        connectionTimeout: 15000,
-        greetingTimeout: 15000,
-        socketTimeout: 15000,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
     });
 };
 
