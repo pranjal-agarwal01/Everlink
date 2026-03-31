@@ -23,10 +23,13 @@ const buildTransporter = async () => {
         console.warn('[EMAIL] DNS resolve4 failed, using hostname:', dnsErr.message);
     }
 
+    const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
+    const smtpSecure = smtpPort === 465; // 465 = SSL, 587 = STARTTLS
+
     return nodemailer.createTransport({
         host: smtpHost,
-        port: 465,
-        secure: true,
+        port: smtpPort,
+        secure: smtpSecure,
         pool: true,           // reuse SMTP connections
         maxConnections: 3,
         maxMessages: 100,
@@ -46,7 +49,9 @@ const sendEmail = async (options) => {
         _transporter = await buildTransporter();
     }
 
-    if (!_transporter) return;
+    if (!_transporter) {
+        throw new Error('Email transporter could not be built — check SMTP credentials in .env');
+    }
 
     const fromEmail = (process.env.FROM_EMAIL || process.env.SMTP_EMAIL || '').trim();
     const fromName  = process.env.FROM_NAME || 'Everlink';
