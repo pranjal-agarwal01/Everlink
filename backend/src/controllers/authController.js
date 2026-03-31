@@ -1,6 +1,6 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
 
 // --- Helpers ---
@@ -23,19 +23,24 @@ const validatePassword = (password) => {
     return null;
 };
 
-// Hash a 6-digit OTP
-const hashOtp = async (otp) => {
-    const salt = await bcrypt.genSalt(8); // lower cost — OTPs expire in 10 min
-    return bcrypt.hash(otp, salt);
+// Fast OTP hashing using HMAC-SHA256 — OTPs expire in 10 min, no need for bcrypt
+const hashOtp = (otp) => {
+    return crypto.createHmac('sha256', process.env.JWT_SECRET).update(otp).digest('hex');
 };
 
-// Fire-and-forget: sends in background so the HTTP response is instant
-const sendOtpEmailAsync = (email, otp) => {
-    sendEmail({
-        email,
-        subject: 'Your Everlink Verification Code',
-        text: `Your Everlink verification code is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
-    }).catch((err) => console.error('OTP email failed (background):', err.message));
+// Send OTP email and return success/failure so the caller can inform the user
+const sendOtpEmail = async (email, otp) => {
+    try {
+        await sendEmail({
+            email,
+            subject: 'Your Everlink Verification Code',
+            text: `Your Everlink verification code is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
+        });
+        return true;
+    } catch (err) {
+        console.error('OTP email failed:', err.message);
+        return false;
+    }
 };
 
 // --- Controllers ---
@@ -61,19 +66,22 @@ const registerUser = async (req, res) => {
     }
 
     try {
-        let user = await User.findOne({ email });
+        let user = await User.findOne({ email }).select('+password');
 
         if (user && user.isVerified) {
             return res.status(409).json({ success: false, message: 'An account with this email already exists' });
         }
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const otpHash = await hashOtp(otp);
+        const otpHash = hashOtp(otp);
         const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
         if (user && !user.isVerified) {
             user.name = name;
-            user.password = password;
+            // Only re-hash password if it actually changed
+            const bcrypt = require('bcryptjs');
+            const passwordChanged = !(await bcrypt.compare(password, user.password));
+            if (passwordChanged) user.password = password;
             user.otp = otpHash;
             user.otpExpires = otpExpires;
             user.otpAttempts = 0;
@@ -83,15 +91,18 @@ const registerUser = async (req, res) => {
             user = await User.create({ name, email, password, otp: otpHash, otpExpires });
         }
 
-        // Fire-and-forget — respond instantly, email arrives in background
-        sendOtpEmailAsync(user.email, otp);
         if (process.env.NODE_ENV !== 'production') {
             console.log(`[DEV] OTP for ${user.email}: ${otp}`);
         }
 
+        // Await email so we can tell user if it failed
+        const emailSent = await sendOtpEmail(user.email, otp);
+
         return res.status(201).json({
             success: true,
-            message: 'Account created. Please check your email for the verification code.',
+            message: emailSent
+                ? 'Account created. Please check your email for the verification code.'
+                : 'Account created but we could not send the verification email. Please use "Resend Code".',
             email: user.email
         });
 
@@ -136,15 +147,19 @@ const verifyEmail = async (req, res) => {
             return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' });
         }
 
-        // Verify OTP — support both hashed (new) and plaintext (legacy) OTPs
-        let isMatch = await user.matchOtp(String(otp).trim());
+        // Verify OTP — support HMAC (current), bcrypt (previous), and plaintext (legacy)
+        const enteredOtp = String(otp).trim();
+        const expectedHash = hashOtp(enteredOtp);
+        let isMatch = user.otp === expectedHash;
 
-        // Legacy fallback: user registered before bcrypt hashing upgrade
-        if (!isMatch && user.otp && user.otp === String(otp).trim()) {
+        // Fallback: bcrypt-hashed OTP from before HMAC migration
+        if (!isMatch && user.otp && user.otp.startsWith('$2')) {
+            isMatch = await user.matchOtp(enteredOtp);
+        }
+
+        // Legacy fallback: plaintext OTP from before any hashing
+        if (!isMatch && user.otp && user.otp === enteredOtp) {
             isMatch = true;
-            // Upgrade to hashed OTP immediately
-            const bcrypt = require('bcryptjs');
-            user.otp = await bcrypt.hash(String(otp).trim(), 8);
         }
 
         if (!isMatch) {
@@ -200,19 +215,25 @@ const resendOtp = async (req, res) => {
         }
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const otpHash = await hashOtp(otp);
+        const otpHash = hashOtp(otp);
         user.otp = otpHash;
         user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
         user.otpAttempts = 0;
         user.otpLockedUntil = undefined;
         await user.save();
 
-        sendOtpEmailAsync(user.email, otp);
         if (process.env.NODE_ENV !== 'production') {
             console.log(`[DEV] Resent OTP for ${user.email}: ${otp}`);
         }
 
-        return res.status(200).json({ success: true, message: 'A new verification code has been sent to your email.' });
+        const emailSent = await sendOtpEmail(user.email, otp);
+
+        return res.status(200).json({
+            success: true,
+            message: emailSent
+                ? 'A new verification code has been sent to your email.'
+                : 'Could not send the verification email. Please try again shortly.'
+        });
 
     } catch (error) {
         console.error('Resend OTP error:', error.message);
@@ -239,21 +260,24 @@ const loginUser = async (req, res) => {
             if (!user.isVerified) {
                 // Resend a fresh OTP
                 const otp = Math.floor(100000 + Math.random() * 900000).toString();
-                const otpHash = await hashOtp(otp);
+                const otpHash = hashOtp(otp);
                 user.otp = otpHash;
                 user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
                 user.otpAttempts = 0;
                 user.otpLockedUntil = undefined;
                 await user.save();
 
-                sendOtpEmailAsync(user.email, otp);
                 if (process.env.NODE_ENV !== 'production') {
                     console.log(`[DEV] OTP (login unverified) for ${user.email}: ${otp}`);
                 }
 
+                const emailSent = await sendOtpEmail(user.email, otp);
+
                 return res.status(403).json({
                     success: false,
-                    message: 'Please verify your email. A new code has been sent.',
+                    message: emailSent
+                        ? 'Please verify your email. A new code has been sent.'
+                        : 'Please verify your email. Could not send code — try "Resend Code".',
                     unverified: true,
                     email: user.email
                 });
