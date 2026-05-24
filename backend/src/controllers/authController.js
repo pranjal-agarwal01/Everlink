@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
@@ -6,6 +7,9 @@ const sendEmail = require('../utils/sendEmail');
 // --- Helpers ---
 
 const generateToken = (id, email) => {
+    if (!process.env.JWT_SECRET) {
+        throw new Error('JWT_SECRET is not set on the server');
+    }
     return jwt.sign({ id, email }, process.env.JWT_SECRET, {
         expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     });
@@ -25,8 +29,14 @@ const validatePassword = (password) => {
 
 // Fast OTP hashing using HMAC-SHA256 — OTPs expire in 10 min, no need for bcrypt
 const hashOtp = (otp) => {
+    if (!process.env.JWT_SECRET) {
+        throw new Error('JWT_SECRET is not set on the server');
+    }
     return crypto.createHmac('sha256', process.env.JWT_SECRET).update(otp).digest('hex');
 };
+
+// Cryptographically uniform 6-digit OTP
+const generateOtp = () => crypto.randomInt(0, 1000000).toString().padStart(6, '0');
 
 // Send OTP email and return success/failure so the caller can inform the user
 const sendOtpEmail = async (email, otp) => {
@@ -72,15 +82,14 @@ const registerUser = async (req, res) => {
             return res.status(409).json({ success: false, message: 'An account with this email already exists' });
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = generateOtp();
         const otpHash = hashOtp(otp);
         const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
         if (user && !user.isVerified) {
             user.name = name;
-            // Only re-hash password if it actually changed
-            const bcrypt = require('bcryptjs');
-            const passwordChanged = !(await bcrypt.compare(password, user.password));
+            // Only re-hash password if it actually changed (compare against existing bcrypt hash)
+            const passwordChanged = !user.password || !(await bcrypt.compare(password, user.password));
             if (passwordChanged) user.password = password;
             user.otp = otpHash;
             user.otpExpires = otpExpires;
@@ -102,12 +111,17 @@ const registerUser = async (req, res) => {
             success: true,
             message: emailSent
                 ? 'Account created. Please check your email for the verification code.'
-                : 'Account created but we could not send the verification email. Please use "Resend Code".',
-            email: user.email
+                : 'Account created but the verification email could not be sent. Please use "Resend Code" or contact support.',
+            emailSent,
+            email: user.email,
         });
 
     } catch (error) {
         console.error('Register error:', error.message);
+        if (error.name === 'ValidationError') {
+            const msg = Object.values(error.errors)[0]?.message || 'Invalid input';
+            return res.status(400).json({ success: false, message: msg });
+        }
         return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
     }
 };
@@ -214,7 +228,7 @@ const resendOtp = async (req, res) => {
             return res.status(400).json({ success: false, message: 'This account is already verified.' });
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = generateOtp();
         const otpHash = hashOtp(otp);
         user.otp = otpHash;
         user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
@@ -259,7 +273,7 @@ const loginUser = async (req, res) => {
         if (user && (await user.matchPassword(password))) {
             if (!user.isVerified) {
                 // Resend a fresh OTP
-                const otp = Math.floor(100000 + Math.random() * 900000).toString();
+                const otp = generateOtp();
                 const otpHash = hashOtp(otp);
                 user.otp = otpHash;
                 user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);

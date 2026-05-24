@@ -1,5 +1,13 @@
 const Link = require('../models/Link');
 
+// Normalize a URL — add https:// if the user typed a bare host like "example.com"
+const normalizeUrl = (url) => {
+    if (!url) return url;
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`;
+    return trimmed;
+};
+
 // @desc    Get all links for a user
 // @route   GET /api/links
 // @access  Private
@@ -16,34 +24,50 @@ const getLinks = async (req, res) => {
 // @route   POST /api/links
 // @access  Private
 const createLink = async (req, res) => {
-    let { originalUrl, title } = req.body;
-    if (originalUrl) originalUrl = originalUrl.trim();
-    if (title) title = title.trim();
+    let { originalUrl, title, slug } = req.body;
+    if (originalUrl) originalUrl = normalizeUrl(originalUrl);
+    if (title) title = String(title).trim();
+    if (slug) slug = String(slug).trim().toLowerCase();
 
     if (!originalUrl) {
-        return res.status(400).json({ success: false, message: 'Please provide original URL' });
+        return res.status(400).json({ success: false, message: 'Please provide a destination URL' });
     }
 
     try {
+        if (slug) {
+            const existing = await Link.findOne({ slug });
+            if (existing) {
+                return res.status(409).json({ success: false, message: 'This custom link is already taken.' });
+            }
+        }
+
         const link = await Link.create({
             title: title || '',
             originalUrl,
-            user: req.user.id
+            ...(slug && { slug }),
+            user: req.user.id,
         });
         res.status(201).json({ success: true, link });
     } catch (error) {
+        if (error.name === 'ValidationError') {
+            const msg = Object.values(error.errors)[0]?.message || 'Validation failed';
+            return res.status(400).json({ success: false, message: msg });
+        }
+        if (error.code === 11000) {
+            return res.status(409).json({ success: false, message: 'This custom link is already taken.' });
+        }
         res.status(500).json({ success: false, message: error.message });
     }
 };
 
-// @desc    Update link (slug or originalUrl)
+// @desc    Update link (slug, originalUrl, title)
 // @route   PUT /api/links/:id
 // @access  Private
 const updateLink = async (req, res) => {
     let { originalUrl, slug, title } = req.body;
-    if (originalUrl) originalUrl = originalUrl.trim();
-    if (slug) slug = slug.trim();
-    if (title !== undefined) title = title.trim();
+    if (originalUrl) originalUrl = normalizeUrl(originalUrl);
+    if (slug !== undefined) slug = String(slug).trim().toLowerCase();
+    if (title !== undefined) title = String(title).trim();
 
     try {
         const link = await Link.findById(req.params.id);
@@ -63,14 +87,26 @@ const updateLink = async (req, res) => {
             }
         }
 
+        const updates = {};
+        if (title !== undefined) updates.title = title;
+        if (originalUrl) updates.originalUrl = originalUrl;
+        if (slug) updates.slug = slug;
+
         const updatedLink = await Link.findByIdAndUpdate(
             req.params.id,
-            { ...(title !== undefined && { title }), originalUrl, slug },
+            updates,
             { new: true, runValidators: true }
         );
 
         res.status(200).json({ success: true, link: updatedLink });
     } catch (error) {
+        if (error.name === 'ValidationError') {
+            const msg = Object.values(error.errors)[0]?.message || 'Validation failed';
+            return res.status(400).json({ success: false, message: msg });
+        }
+        if (error.code === 11000) {
+            return res.status(409).json({ success: false, message: 'This custom link is already taken.' });
+        }
         res.status(500).json({ success: false, message: error.message });
     }
 };
@@ -86,7 +122,6 @@ const deleteLink = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Link not found' });
         }
 
-        // Check for user
         if (link.user.toString() !== req.user.id) {
             return res.status(401).json({ success: false, message: 'User not authorized to delete this link' });
         }
@@ -105,17 +140,17 @@ const redirectLink = async (req, res) => {
     try {
         // Atomic increment — avoids race conditions on concurrent hits
         const link = await Link.findOneAndUpdate(
-            { slug: req.params.slug },
+            { slug: String(req.params.slug).toLowerCase() },
             { $inc: { clicks: 1 } },
-            { new: false } // we don't need the updated doc
+            { new: false }
         );
 
         if (link) {
             return res.redirect(302, link.originalUrl);
         }
-        return res.status(404).json({ message: 'Link not found' });
+        return res.status(404).json({ success: false, message: 'Link not found' });
     } catch (error) {
-        res.status(500).json({ message: 'Server Error' });
+        res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
 
@@ -124,5 +159,5 @@ module.exports = {
     createLink,
     updateLink,
     deleteLink,
-    redirectLink
+    redirectLink,
 };

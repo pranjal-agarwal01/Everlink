@@ -85,11 +85,16 @@ const Auth = ({ isLogin, loginUser }) => {
                 navigate('/dashboard', { replace: true });
             } else {
                 // Register success → show OTP step
-                setPendingEmail(formData.email);
+                setPendingEmail(data.email || formData.email);
                 setStep('VERIFY');
                 setOtp('');
                 setResendTimer(RESEND_COOLDOWN);
-                setInfo('Verification code sent! Check your inbox (and spam folder).');
+                // If the backend reports the email actually went out, show success; otherwise show its real message
+                if (data.emailSent === false) {
+                    setError(data.message || 'Could not send the verification email. Please use "Resend Code".');
+                } else {
+                    setInfo(data.message || 'Verification code sent! Check your inbox (and spam folder).');
+                }
             }
         } catch (err) {
             setError(err.message);

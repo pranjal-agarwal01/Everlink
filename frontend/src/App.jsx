@@ -54,11 +54,11 @@ function App() {
           <Route path="/" element={<Home user={user} />} />
           <Route
             path="/login"
-            element={!user ? <Auth isLogin={true} loginUser={loginUser} /> : <Navigate to="/dashboard" replace />}
+            element={!user ? <Auth key="login" isLogin={true} loginUser={loginUser} /> : <Navigate to="/dashboard" replace />}
           />
           <Route
             path="/register"
-            element={!user ? <Auth isLogin={false} loginUser={loginUser} /> : <Navigate to="/dashboard" replace />}
+            element={!user ? <Auth key="register" isLogin={false} loginUser={loginUser} /> : <Navigate to="/dashboard" replace />}
           />
           <Route
             path="/dashboard"

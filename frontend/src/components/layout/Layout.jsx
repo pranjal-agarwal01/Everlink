@@ -25,7 +25,7 @@ const Layout = ({ children, user, logout }) => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                         <span>⚡ Engineered by</span>
                         <a
-                            href="YOUR_PROFILE_LINK_HERE"
+                            href="https://github.com/pranjal-agarwal01"
                             target="_blank"
                             rel="noreferrer"
                             style={{

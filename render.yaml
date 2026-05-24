@@ -1,0 +1,37 @@
+# Render Blueprint — one-click deploy at https://render.com/deploy
+# Includes the Everlink backend Web Service.
+# After this deploys, deploy the frontend separately to Vercel (see README).
+services:
+  - type: web
+    name: everlink-backend
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: FROM_NAME
+        value: Everlink
+      # Secrets you must set in the Render dashboard before first deploy:
+      - key: MONGO_URI
+        sync: false
+      - key: SMTP_EMAIL
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - key: FRONTEND_URL
+        sync: false

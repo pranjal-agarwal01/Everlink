@@ -17,7 +17,7 @@ const userSchema = new mongoose.Schema({
     index: true,
     maxlength: [200, 'Email cannot be more than 200 characters'],
     match: [
-      /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+      /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
       'Please provide a valid email'
     ]
   },
@@ -32,7 +32,7 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  otp: String,           // stored as bcrypt hash
+  otp: String,           // stored as HMAC-SHA256 hash (legacy: bcrypt / plaintext)
   otpExpires: Date,
   otpAttempts: {
     type: Number,

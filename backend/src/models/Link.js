@@ -11,10 +11,19 @@ const linkSchema = new mongoose.Schema({
     originalUrl: {
         type: String,
         required: [true, 'Please provide the original URL'],
-        match: [
-            /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/,
-            'Please provide a valid HTTP/HTTPS URL'
-        ]
+        trim: true,
+        maxlength: [2048, 'URL is too long'],
+        validate: {
+            validator: function (v) {
+                try {
+                    const u = new URL(v);
+                    return u.protocol === 'http:' || u.protocol === 'https:';
+                } catch {
+                    return false;
+                }
+            },
+            message: 'Please provide a valid http:// or https:// URL'
+        }
     },
     slug: {
         type: String,
@@ -23,6 +32,10 @@ const linkSchema = new mongoose.Schema({
         // Provide a default NanoID if one is not specified
         default: () => nanoid(8),
         trim: true,
+        lowercase: true,
+        match: [/^[a-z0-9_-]+$/i, 'Slug may only contain letters, numbers, hyphens, and underscores'],
+        minlength: [3, 'Slug must be at least 3 characters'],
+        maxlength: [64, 'Slug cannot be more than 64 characters'],
     },
     user: {
         type: mongoose.Schema.Types.ObjectId,

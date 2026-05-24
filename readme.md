@@ -68,27 +68,17 @@ cd everlink
 ```bash
 cd backend
 npm install
+cp .env.example .env
 ```
 
-Create a `.env` file in the `backend/` directory:
+Then open `backend/.env` and fill in the values. Generate a strong `JWT_SECRET`:
 
-```env
-NODE_ENV=development
-PORT=5000
-MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/everlink
-JWT_SECRET=your_super_secret_jwt_key
-JWT_EXPIRES_IN=7d
-
-# Gmail SMTP (use App Password, not your real password)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_EMAIL=your@gmail.com
-SMTP_PASSWORD=your_app_password
-FROM_NAME=Everlink
-FROM_EMAIL=your@gmail.com
-
-FRONTEND_URL=http://localhost:5173
+```bash
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 ```
+
+For `SMTP_PASSWORD`, you need a **Gmail App Password** (not your account password):
+Google Account → Security → 2-Step Verification → App Passwords → "Mail".
 
 > **How to get a Gmail App Password:**
 > Google Account → Security → 2-Step Verification → App passwords → Create one for "Mail"
@@ -103,13 +93,10 @@ npm run dev
 ```bash
 cd frontend
 npm install
+cp .env.example .env
 ```
 
-Create a `.env` file in the `frontend/` directory:
-
-```env
-VITE_API_URL=http://localhost:5000
-```
+Then open `frontend/.env` and set `VITE_API_URL` (and `VITE_SHORT_URL_BASE`) to your backend URL.
 
 Start the frontend:
 ```bash
@@ -147,11 +134,16 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ## Deployment
 
 ### Backend → Render
-1. Create a new **Web Service** on [Render](https://render.com)
-2. Connect your GitHub repo, set **Root Directory** to `backend`
-3. Build command: `npm install` | Start command: `node server.js`
-4. Add all environment variables from the `.env` section above
-5. Set `FRONTEND_URL` to your Vercel URL after deploying the frontend
+This repo includes a `render.yaml` blueprint. Easiest path:
+1. Push to GitHub.
+2. Render dashboard → **New +** → **Blueprint** → select your repo.
+3. Fill the secret env vars (`MONGO_URI`, `SMTP_EMAIL`, `SMTP_PASSWORD`, `FROM_EMAIL`, `FRONTEND_URL`) in the prompt — `JWT_SECRET` is auto-generated.
+
+Or manually:
+1. **New +** → **Web Service** → connect repo → **Root Directory** = `backend`.
+2. Build: `npm install` | Start: `node server.js` | Health check path: `/health`.
+3. Add every variable from `backend/.env.example`.
+4. After the frontend is deployed, set `FRONTEND_URL` to your Vercel domain (you can pass multiple, comma-separated).
 
 ### Frontend → Vercel
 1. Create a new **Project** on [Vercel](https://vercel.com)
@@ -182,6 +174,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 | `FRONTEND_URL` | Backend | ✅ | Frontend origin for CORS |
 | `PORT` | Backend | ❌ | Server port (default: `5000`) |
 | `VITE_API_URL` | Frontend | ✅ | Backend API base URL |
+| `VITE_SHORT_URL_BASE` | Frontend | ❌ | Base URL shown for short links (defaults to `VITE_API_URL`) |
 
 ---
 

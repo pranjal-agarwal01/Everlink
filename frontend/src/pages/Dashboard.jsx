@@ -75,10 +75,15 @@ const Dashboard = ({ user, logoutUser }) => {
                 setLinks((prev) => prev.map((l) => (l._id === editingId ? data.link : l)));
                 resetForm();
             } else {
+                const payload = {
+                    originalUrl: formData.originalUrl,
+                    title: formData.title,
+                };
+                if (formData.slug) payload.slug = formData.slug;
                 const res = await fetch(`${API}/api/links`, {
                     method: 'POST',
                     headers: authHeaders(),
-                    body: JSON.stringify({ originalUrl: formData.originalUrl }),
+                    body: JSON.stringify(payload),
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.message || 'Create failed');
@@ -174,7 +179,7 @@ const Dashboard = ({ user, logoutUser }) => {
                         onChange={(e) => setFormData((p) => ({ ...p, title: e.target.value }))}
                         maxLength={100}
                     />
-                    <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: editingId ? '1fr 1fr' : '1fr', marginTop: '0.5rem' }}>
+                    <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr', marginTop: '0.5rem' }}>
                         <Input
                             label="Destination URL"
                             id="originalUrl"
@@ -184,16 +189,16 @@ const Dashboard = ({ user, logoutUser }) => {
                             onChange={(e) => setFormData((p) => ({ ...p, originalUrl: e.target.value }))}
                             required
                         />
-                        {editingId && (
-                            <Input
-                                label="Custom Slug (optional)"
-                                id="slug"
-                                type="text"
-                                placeholder="my-portfolio"
-                                value={formData.slug}
-                                onChange={(e) => setFormData((p) => ({ ...p, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
-                            />
-                        )}
+                        <Input
+                            label="Custom Slug (optional)"
+                            id="slug"
+                            type="text"
+                            placeholder="my-portfolio"
+                            value={formData.slug}
+                            onChange={(e) => setFormData((p) => ({ ...p, slug: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '') }))}
+                            minLength={3}
+                            maxLength={64}
+                        />
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
@@ -252,7 +257,7 @@ const Dashboard = ({ user, logoutUser }) => {
                                 )}
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.6rem' }}>
                                     <a
-                                        href={`${API}/${link.slug}`}
+                                        href={shortUrl(link.slug)}
                                         target="_blank"
                                         rel="noreferrer"
                                         style={{
@@ -264,7 +269,7 @@ const Dashboard = ({ user, logoutUser }) => {
                                         {shortUrl(link.slug)}
                                     </a>
                                     <button
-                                        onClick={() => copyToClipboard(`${API}/${link.slug}`, link._id)}
+                                        onClick={() => copyToClipboard(shortUrl(link.slug), link._id)}
                                         title="Copy link"
                                         style={{
                                             background: copied === link._id ? 'var(--success-color)' : 'var(--surface-color)',
