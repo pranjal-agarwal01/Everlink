@@ -41,4 +41,5 @@ Thumbs.db
 # Vite / React
 # ===========================
 frontend/.vite/
-
+backend/.env.example
+frontend/.env.example
