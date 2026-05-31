@@ -31,7 +31,7 @@ Most link shorteners treat links as a one-and-done transaction. But in the real 
 - 🏷️ **Custom Slugs** — Name your links meaningfully (e.g. `/resume`, `/portfolio`)
 - 📊 **Click Tracking** — See how many times each link has been opened
 - 📝 **Link Titles** — Give each link a descriptive name for easy management
-- 🔐 **Secure Auth** — JWT-based authentication with mandatory email OTP verification
+- 🔐 **Secure Auth** — JWT-based username + password authentication with bcrypt-hashed passwords
 - 🛡️ **Protected Routes** — All link management requires authentication
 - ⚡ **Fast Redirects** — Slugs are database-indexed for near-instant lookups
 
@@ -44,8 +44,7 @@ Most link shorteners treat links as a one-and-done transaction. But in the real 
 | **Frontend** | React, Vite, React Router |
 | **Backend** | Node.js, Express |
 | **Database** | MongoDB (Mongoose) |
-| **Auth** | JWT + bcryptjs |
-| **Email** | Nodemailer (SMTP / Gmail) |
+| **Auth** | JWT + bcryptjs (username + password) |
 | **Slug Generation** | nanoid |
 
 ---
@@ -53,9 +52,8 @@ Most link shorteners treat links as a one-and-done transaction. But in the real 
 ## Getting Started
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 20+
 - A MongoDB database (local or [MongoDB Atlas](https://www.mongodb.com/atlas))
-- A Gmail account for sending OTP emails (or any SMTP provider)
 
 ### 1. Clone the Repository
 ```bash
@@ -76,12 +74,6 @@ Then open `backend/.env` and fill in the values. Generate a strong `JWT_SECRET`:
 ```bash
 node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 ```
-
-For `SMTP_PASSWORD`, you need a **Gmail App Password** (not your account password):
-Google Account → Security → 2-Step Verification → App Passwords → "Mail".
-
-> **How to get a Gmail App Password:**
-> Google Account → Security → 2-Step Verification → App passwords → Create one for "Mail"
 
 Start the backend:
 ```bash
@@ -112,9 +104,8 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ### Auth
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/auth/register` | Register a new user (sends OTP) |
-| `POST` | `/api/auth/verify` | Verify email with OTP |
-| `POST` | `/api/auth/login` | Login with email & password |
+| `POST` | `/api/auth/register` | Register a new user (`name`, `username`, `password`) — returns a JWT |
+| `POST` | `/api/auth/login` | Login with `username` & `password` — returns a JWT |
 
 ### Links (Protected — requires `Authorization: Bearer <token>`)
 | Method | Endpoint | Description |
@@ -137,7 +128,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 This repo includes a `render.yaml` blueprint. Easiest path:
 1. Push to GitHub.
 2. Render dashboard → **New +** → **Blueprint** → select your repo.
-3. Fill the secret env vars (`MONGO_URI`, `SMTP_EMAIL`, `SMTP_PASSWORD`, `FROM_EMAIL`, `FRONTEND_URL`) in the prompt — `JWT_SECRET` is auto-generated.
+3. Fill the secret env vars (`MONGO_URI`, `FRONTEND_URL`) in the prompt — `JWT_SECRET` is auto-generated.
 
 Or manually:
 1. **New +** → **Web Service** → connect repo → **Root Directory** = `backend`.
@@ -165,12 +156,6 @@ Or manually:
 | `MONGO_URI` | Backend | ✅ | MongoDB connection string |
 | `JWT_SECRET` | Backend | ✅ | Secret key for signing JWTs |
 | `JWT_EXPIRES_IN` | Backend | ❌ | Token expiry (default: `7d`) |
-| `SMTP_EMAIL` | Backend | ✅ | Gmail address for sending OTPs |
-| `SMTP_PASSWORD` | Backend | ✅ | Gmail App Password |
-| `SMTP_HOST` | Backend | ❌ | SMTP host (default: `smtp.gmail.com`) |
-| `SMTP_PORT` | Backend | ❌ | SMTP port (default: `587`) |
-| `FROM_NAME` | Backend | ❌ | Sender name in emails |
-| `FROM_EMAIL` | Backend | ❌ | Sender email address |
 | `FRONTEND_URL` | Backend | ✅ | Frontend origin for CORS |
 | `PORT` | Backend | ❌ | Server port (default: `5000`) |
 | `VITE_API_URL` | Frontend | ✅ | Backend API base URL |
@@ -181,10 +166,11 @@ Or manually:
 ## Security
 
 - Passwords hashed with **bcryptjs** (never stored in plaintext)
-- Email verification required before account activation
+- Username + password auth — no email, no third-party login
 - JWT tokens expire after 7 days
 - Generic error messages to prevent user enumeration attacks
 - CORS restricted to whitelisted frontend origin only
+- Reserved slugs (`api`, `health`, …) can't be claimed as short links
 - All link operations require a valid JWT
 
 ---

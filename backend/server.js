@@ -76,6 +76,9 @@ app.use((err, req, res, _next) => {
 // Without await, the server answers 500s during the cold-start window before Mongo is ready.
 (async () => {
     try {
+        if (!process.env.JWT_SECRET) {
+            throw new Error('JWT_SECRET is not set. Auth cannot work — set it in your environment.');
+        }
         await connectDB();
         app.listen(port, () => {
             console.log(`Server running on port ${port} [${process.env.NODE_ENV || 'development'}]`);

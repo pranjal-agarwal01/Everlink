@@ -1,16 +1,13 @@
 const User = require('../models/User');
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const sendEmail = require('../utils/sendEmail');
 
 // --- Helpers ---
 
-const generateToken = (id, email) => {
+const generateToken = (id, username) => {
     if (!process.env.JWT_SECRET) {
         throw new Error('JWT_SECRET is not set on the server');
     }
-    return jwt.sign({ id, email }, process.env.JWT_SECRET, {
+    return jwt.sign({ id, username }, process.env.JWT_SECRET, {
         expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     });
 };
@@ -27,230 +24,71 @@ const validatePassword = (password) => {
     return null;
 };
 
-// Fast OTP hashing using HMAC-SHA256 — OTPs expire in 10 min, no need for bcrypt
-const hashOtp = (otp) => {
-    if (!process.env.JWT_SECRET) {
-        throw new Error('JWT_SECRET is not set on the server');
-    }
-    return crypto.createHmac('sha256', process.env.JWT_SECRET).update(otp).digest('hex');
-};
+// Username: 3–20 chars, lowercase letters, numbers, and underscores only.
+const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
 
-// Cryptographically uniform 6-digit OTP
-const generateOtp = () => crypto.randomInt(0, 1000000).toString().padStart(6, '0');
-
-// Send OTP email and return success/failure so the caller can inform the user
-const sendOtpEmail = async (email, otp) => {
-    try {
-        await sendEmail({
-            email,
-            subject: 'Your Everlink Verification Code',
-            text: `Your Everlink verification code is: ${otp}\n\nThis code expires in 10 minutes. Do not share it with anyone.`,
-        });
-        return true;
-    } catch (err) {
-        console.error('OTP email failed:', err.message);
-        return false;
+const validateUsername = (username) => {
+    if (!username || username.length < 3) {
+        return 'Username must be at least 3 characters';
     }
+    if (username.length > 20) {
+        return 'Username cannot be more than 20 characters';
+    }
+    if (!USERNAME_REGEX.test(username)) {
+        return 'Username may only contain lowercase letters, numbers, and underscores';
+    }
+    return null;
 };
 
 // --- Controllers ---
 
-// @desc    Register new user
+// @desc    Register a new user (name + username + password — logs in immediately)
 // @route   POST /api/auth/register
 // @access  Public
 const registerUser = async (req, res) => {
-    let { name, email, password } = req.body;
+    let { name, username, password } = req.body;
 
     if (name) name = String(name).trim().replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    if (email) email = String(email).trim().toLowerCase();
+    if (username) username = String(username).trim().toLowerCase();
     if (password) password = String(password).trim();
 
-    if (!name || !email || !password) {
+    if (!name || !username || !password) {
         return res.status(400).json({ success: false, message: 'Please fill in all required fields' });
     }
 
-    // Server-side password validation BEFORE touching the database
+    // Server-side validation BEFORE touching the database
+    const unameError = validateUsername(username);
+    if (unameError) {
+        return res.status(400).json({ success: false, message: unameError });
+    }
+
     const pwError = validatePassword(password);
     if (pwError) {
         return res.status(400).json({ success: false, message: pwError });
     }
 
     try {
-        let user = await User.findOne({ email }).select('+password');
-
-        if (user && user.isVerified) {
-            return res.status(409).json({ success: false, message: 'An account with this email already exists' });
+        const existing = await User.findOne({ username });
+        if (existing) {
+            return res.status(409).json({ success: false, message: 'This username is already taken' });
         }
 
-        const otp = generateOtp();
-        const otpHash = hashOtp(otp);
-        const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-
-        if (user && !user.isVerified) {
-            user.name = name;
-            // Only re-hash password if it actually changed (compare against existing bcrypt hash)
-            const passwordChanged = !user.password || !(await bcrypt.compare(password, user.password));
-            if (passwordChanged) user.password = password;
-            user.otp = otpHash;
-            user.otpExpires = otpExpires;
-            user.otpAttempts = 0;
-            user.otpLockedUntil = undefined;
-            await user.save();
-        } else {
-            user = await User.create({ name, email, password, otp: otpHash, otpExpires });
-        }
-
-        if (process.env.NODE_ENV !== 'production') {
-            console.log(`[DEV] OTP for ${user.email}: ${otp}`);
-        }
-
-        // Await email so we can tell user if it failed
-        const emailSent = await sendOtpEmail(user.email, otp);
+        const user = await User.create({ name, username, password });
 
         return res.status(201).json({
             success: true,
-            message: emailSent
-                ? 'Account created. Please check your email for the verification code.'
-                : 'Account created but the verification email could not be sent. Please use "Resend Code" or contact support.',
-            emailSent,
-            email: user.email,
+            token: generateToken(user._id, user.username),
+            user: { id: user._id, name: user.name, username: user.username },
         });
-
     } catch (error) {
         console.error('Register error:', error.message);
         if (error.name === 'ValidationError') {
             const msg = Object.values(error.errors)[0]?.message || 'Invalid input';
             return res.status(400).json({ success: false, message: msg });
         }
-        return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
-    }
-};
-
-// @desc    Verify Email OTP
-// @route   POST /api/auth/verify
-// @access  Public
-const verifyEmail = async (req, res) => {
-    const { email, otp } = req.body;
-
-    if (!email || !otp) {
-        return res.status(400).json({ success: false, message: 'Email and OTP are required' });
-    }
-
-    try {
-        const user = await User.findOne({ email: String(email).trim().toLowerCase() });
-
-        if (!user) {
-            return res.status(400).json({ success: false, message: 'Invalid verification request' });
+        if (error.code === 11000) {
+            return res.status(409).json({ success: false, message: 'This username is already taken' });
         }
-
-        if (user.isVerified) {
-            return res.status(400).json({ success: false, message: 'This account is already verified. Please log in.' });
-        }
-
-        // Check OTP lock
-        if (user.otpLockedUntil && user.otpLockedUntil > new Date()) {
-            const waitMin = Math.ceil((user.otpLockedUntil - Date.now()) / 60000);
-            return res.status(429).json({
-                success: false,
-                message: `Too many incorrect attempts. Please try again in ${waitMin} minute(s) or request a new code.`
-            });
-        }
-
-        // Check expiry
-        if (!user.otpExpires || user.otpExpires < new Date()) {
-            return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' });
-        }
-
-        // Verify OTP — support HMAC (current), bcrypt (previous), and plaintext (legacy)
-        const enteredOtp = String(otp).trim();
-        const expectedHash = hashOtp(enteredOtp);
-        let isMatch = user.otp === expectedHash;
-
-        // Fallback: bcrypt-hashed OTP from before HMAC migration
-        if (!isMatch && user.otp && user.otp.startsWith('$2')) {
-            isMatch = await user.matchOtp(enteredOtp);
-        }
-
-        // Legacy fallback: plaintext OTP from before any hashing
-        if (!isMatch && user.otp && user.otp === enteredOtp) {
-            isMatch = true;
-        }
-
-        if (!isMatch) {
-            user.otpAttempts = (user.otpAttempts || 0) + 1;
-            if (user.otpAttempts >= 5) {
-                user.otpLockedUntil = new Date(Date.now() + 15 * 60 * 1000); // lock 15 min
-                user.otpAttempts = 0;
-            }
-            await user.save();
-            return res.status(400).json({ success: false, message: 'Incorrect OTP. Please check and try again.' });
-        }
-
-        // OTP valid — verify user
-        user.isVerified = true;
-        user.otp = undefined;
-        user.otpExpires = undefined;
-        user.otpAttempts = 0;
-        user.otpLockedUntil = undefined;
-        await user.save();
-
-        return res.status(200).json({
-            success: true,
-            token: generateToken(user._id, user.email),
-            user: { id: user._id, name: user.name, email: user.email }
-        });
-
-    } catch (error) {
-        console.error('Verify error:', error.message);
-        return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
-    }
-};
-
-// @desc    Resend OTP to user
-// @route   POST /api/auth/resend-otp
-// @access  Public
-const resendOtp = async (req, res) => {
-    const { email } = req.body;
-
-    if (!email) {
-        return res.status(400).json({ success: false, message: 'Email is required' });
-    }
-
-    try {
-        const user = await User.findOne({ email: String(email).trim().toLowerCase() });
-
-        if (!user) {
-            // Generic response for security
-            return res.status(200).json({ success: true, message: 'If this email is registered, a new OTP has been sent.' });
-        }
-
-        if (user.isVerified) {
-            return res.status(400).json({ success: false, message: 'This account is already verified.' });
-        }
-
-        const otp = generateOtp();
-        const otpHash = hashOtp(otp);
-        user.otp = otpHash;
-        user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-        user.otpAttempts = 0;
-        user.otpLockedUntil = undefined;
-        await user.save();
-
-        if (process.env.NODE_ENV !== 'production') {
-            console.log(`[DEV] Resent OTP for ${user.email}: ${otp}`);
-        }
-
-        const emailSent = await sendOtpEmail(user.email, otp);
-
-        return res.status(200).json({
-            success: true,
-            message: emailSent
-                ? 'A new verification code has been sent to your email.'
-                : 'Could not send the verification email. Please try again shortly.'
-        });
-
-    } catch (error) {
-        console.error('Resend OTP error:', error.message);
         return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
     }
 };
@@ -259,58 +97,31 @@ const resendOtp = async (req, res) => {
 // @route   POST /api/auth/login
 // @access  Public
 const loginUser = async (req, res) => {
-    let { email, password } = req.body;
-    if (email) email = String(email).trim().toLowerCase();
+    let { username, password } = req.body;
+    if (username) username = String(username).trim().toLowerCase();
     if (password) password = String(password).trim();
 
-    if (!email || !password) {
-        return res.status(400).json({ success: false, message: 'Please enter your email and password' });
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: 'Please enter your username and password' });
     }
 
     try {
-        const user = await User.findOne({ email }).select('+password');
+        const user = await User.findOne({ username }).select('+password');
 
         if (user && (await user.matchPassword(password))) {
-            if (!user.isVerified) {
-                // Resend a fresh OTP
-                const otp = generateOtp();
-                const otpHash = hashOtp(otp);
-                user.otp = otpHash;
-                user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-                user.otpAttempts = 0;
-                user.otpLockedUntil = undefined;
-                await user.save();
-
-                if (process.env.NODE_ENV !== 'production') {
-                    console.log(`[DEV] OTP (login unverified) for ${user.email}: ${otp}`);
-                }
-
-                const emailSent = await sendOtpEmail(user.email, otp);
-
-                return res.status(403).json({
-                    success: false,
-                    message: emailSent
-                        ? 'Please verify your email. A new code has been sent.'
-                        : 'Please verify your email. Could not send code — try "Resend Code".',
-                    unverified: true,
-                    email: user.email
-                });
-            }
-
             return res.status(200).json({
                 success: true,
-                token: generateToken(user._id, user.email),
-                user: { id: user._id, name: user.name, email: user.email }
+                token: generateToken(user._id, user.username),
+                user: { id: user._id, name: user.name, username: user.username },
             });
         }
 
-        // Generic error for both wrong email and wrong password (security)
-        return res.status(401).json({ success: false, message: 'Invalid email or password' });
-
+        // Generic error for both wrong username and wrong password (prevents user enumeration)
+        return res.status(401).json({ success: false, message: 'Invalid username or password' });
     } catch (error) {
         console.error('Login error:', error.message);
         return res.status(500).json({ success: false, message: 'Server error. Please try again.' });
     }
 };
 
-module.exports = { registerUser, verifyEmail, resendOtp, loginUser };
+module.exports = { registerUser, loginUser };

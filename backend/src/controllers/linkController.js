@@ -1,5 +1,12 @@
 const Link = require('../models/Link');
 
+// Slugs that would shadow real backend routes (/api/*, /health) or common
+// well-known paths. Custom slugs matching these are rejected.
+const RESERVED_SLUGS = new Set([
+    'api', 'health', 'login', 'register', 'dashboard', 'admin',
+    'assets', 'static', 'favicon.ico', 'robots.txt', 'sitemap.xml',
+]);
+
 // Normalize a URL — add https:// if the user typed a bare host like "example.com"
 const normalizeUrl = (url) => {
     if (!url) return url;
@@ -35,6 +42,9 @@ const createLink = async (req, res) => {
 
     try {
         if (slug) {
+            if (RESERVED_SLUGS.has(slug)) {
+                return res.status(400).json({ success: false, message: 'This slug is reserved. Please choose another.' });
+            }
             const existing = await Link.findOne({ slug });
             if (existing) {
                 return res.status(409).json({ success: false, message: 'This custom link is already taken.' });
@@ -81,6 +91,9 @@ const updateLink = async (req, res) => {
         }
 
         if (slug) {
+            if (RESERVED_SLUGS.has(slug)) {
+                return res.status(400).json({ success: false, message: 'This slug is reserved. Please choose another.' });
+            }
             const existingSlug = await Link.findOne({ slug });
             if (existingSlug && existingSlug._id.toString() !== req.params.id) {
                 return res.status(409).json({ success: false, message: 'This custom link is already taken.' });

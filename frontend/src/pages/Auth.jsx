@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// Client-side password rules (mirrors backend)
+// Client-side rules (mirror the backend)
 const validatePassword = (password) => {
     if (!password || password.length < 8) return 'Password must be at least 8 characters';
     if (!/[A-Za-z]/.test(password)) return 'Password must contain at least one letter';
@@ -13,37 +13,37 @@ const validatePassword = (password) => {
     return null;
 };
 
-const RESEND_COOLDOWN = 60; // seconds
+const validateUsername = (username) => {
+    if (!username || username.length < 3) return 'Username must be at least 3 characters';
+    if (username.length > 20) return 'Username cannot be more than 20 characters';
+    if (!/^[a-z0-9_]+$/.test(username)) return 'Username may only contain lowercase letters, numbers, and underscores';
+    return null;
+};
 
 const Auth = ({ isLogin, loginUser }) => {
-    const [step, setStep] = useState('FORM'); // 'FORM' | 'VERIFY'
-    const [pendingEmail, setPendingEmail] = useState('');
-    const [formData, setFormData] = useState({ name: '', email: '', password: '' });
-    const [otp, setOtp] = useState('');
+    const [formData, setFormData] = useState({ name: '', username: '', password: '' });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
-    const [info, setInfo] = useState('');
-    const [resendTimer, setResendTimer] = useState(0); // countdown seconds
     const navigate = useNavigate();
 
-    // Resend OTP countdown timer
-    useEffect(() => {
-        if (resendTimer <= 0) return;
-        const id = setTimeout(() => setResendTimer((t) => t - 1), 1000);
-        return () => clearTimeout(id);
-    }, [resendTimer]);
-
     const handleChange = (e) => {
-        setFormData((prev) => ({ ...prev, [e.target.id]: e.target.value }));
+        const { id, value } = e.target;
+        // Keep the username field URL-safe as the user types
+        const next = id === 'username' ? value.toLowerCase().replace(/[^a-z0-9_]/g, '') : value;
+        setFormData((prev) => ({ ...prev, [id]: next }));
     };
 
     const handleAuthSubmit = async (e) => {
         e.preventDefault();
         setError('');
-        setInfo('');
 
-        // Client-side password validation for signup — before any API call
+        // Client-side validation for signup — before any API call
         if (!isLogin) {
+            const unameErr = validateUsername(formData.username);
+            if (unameErr) {
+                setError(unameErr);
+                return;
+            }
             const pwErr = validatePassword(formData.password);
             if (pwErr) {
                 setError(pwErr);
@@ -55,8 +55,8 @@ const Auth = ({ isLogin, loginUser }) => {
         try {
             const endpoint = isLogin ? `${API}/api/auth/login` : `${API}/api/auth/register`;
             const body = isLogin
-                ? { email: formData.email, password: formData.password }
-                : { name: formData.name, email: formData.email, password: formData.password };
+                ? { username: formData.username, password: formData.password }
+                : { name: formData.name, username: formData.username, password: formData.password };
 
             const res = await fetch(endpoint, {
                 method: 'POST',
@@ -67,66 +67,10 @@ const Auth = ({ isLogin, loginUser }) => {
             const data = await res.json();
 
             if (!res.ok) {
-                // Unverified user during login → show OTP step
-                if (res.status === 403 && data.unverified) {
-                    setPendingEmail(data.email || formData.email);
-                    setStep('VERIFY');
-                    setOtp('');
-                    setResendTimer(RESEND_COOLDOWN);
-                    setError('');
-                    setInfo(data.message);
-                    return;
-                }
                 throw new Error(data.message || 'Something went wrong');
             }
 
-            if (isLogin) {
-                loginUser({ token: data.token, ...data.user });
-                navigate('/dashboard', { replace: true });
-            } else {
-                // Register success → show OTP step
-                setPendingEmail(data.email || formData.email);
-                setStep('VERIFY');
-                setOtp('');
-                setResendTimer(RESEND_COOLDOWN);
-                // If the backend reports the email actually went out, show success; otherwise show its real message
-                if (data.emailSent === false) {
-                    setError(data.message || 'Could not send the verification email. Please use "Resend Code".');
-                } else {
-                    setInfo(data.message || 'Verification code sent! Check your inbox (and spam folder).');
-                }
-            }
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleVerifySubmit = async (e) => {
-        e.preventDefault();
-        if (!otp.trim() || otp.trim().length < 6) {
-            setError('Please enter the 6-digit code');
-            return;
-        }
-        setIsLoading(true);
-        setError('');
-        setInfo('');
-
-        try {
-            const res = await fetch(`${API}/api/auth/verify`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: pendingEmail, otp: otp.trim() }),
-            });
-
-            const data = await res.json();
-
-            if (!res.ok) {
-                setOtp(''); // Clear stale OTP on failure
-                throw new Error(data.message || 'Verification failed');
-            }
-
+            // Both login and register now return a token directly — log in immediately
             loginUser({ token: data.token, ...data.user });
             navigate('/dashboard', { replace: true });
         } catch (err) {
@@ -135,30 +79,6 @@ const Auth = ({ isLogin, loginUser }) => {
             setIsLoading(false);
         }
     };
-
-    const handleResendOtp = useCallback(async () => {
-        if (resendTimer > 0 || !pendingEmail) return;
-        setError('');
-        setInfo('');
-
-        try {
-            const res = await fetch(`${API}/api/auth/resend-otp`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: pendingEmail }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                setInfo(data.message || 'New code sent!');
-                setOtp('');
-                setResendTimer(RESEND_COOLDOWN);
-            } else {
-                setError(data.message || 'Failed to resend code');
-            }
-        } catch {
-            setError('Network error. Please try again.');
-        }
-    }, [resendTimer, pendingEmail]);
 
     return (
         <div className="auth-wrapper">
@@ -173,33 +93,14 @@ const Auth = ({ isLogin, loginUser }) => {
                         boxShadow: '0 8px 20px rgba(255, 107, 107, 0.4)'
                     }}></div>
                     <h2 style={{ fontSize: '2.25rem', marginBottom: '0.75rem' }}>
-                        {step === 'VERIFY' ? 'Check Your Email' : isLogin ? 'Welcome Back' : 'Create Account'}
+                        {isLogin ? 'Welcome Back' : 'Create Account'}
                     </h2>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '1.05rem' }}>
-                        {step === 'VERIFY'
-                            ? <>We sent a 6-digit code to <strong style={{ color: 'var(--text-primary)' }}>{pendingEmail}</strong></>
-                            : isLogin
-                                ? 'Enter your credentials to continue'
-                                : 'Start managing your permanent links for free'}
+                        {isLogin
+                            ? 'Enter your credentials to continue'
+                            : 'Start managing your permanent links for free'}
                     </p>
                 </div>
-
-                {/* Info message (success/notice) */}
-                {info && (
-                    <div style={{
-                        padding: '1rem',
-                        backgroundColor: 'rgba(6, 214, 160, 0.1)',
-                        color: 'var(--success-color, #06d6a0)',
-                        border: '1px solid rgba(6, 214, 160, 0.25)',
-                        borderRadius: '12px',
-                        marginBottom: '1.5rem',
-                        textAlign: 'center',
-                        fontSize: '0.95rem',
-                        fontWeight: 500
-                    }}>
-                        {info}
-                    </div>
-                )}
 
                 {/* Error message */}
                 {error && (
@@ -218,138 +119,69 @@ const Auth = ({ isLogin, loginUser }) => {
                     </div>
                 )}
 
-                {step === 'FORM' ? (
-                    <form onSubmit={handleAuthSubmit} noValidate>
-                        {!isLogin && (
-                            <Input
-                                label="Full Name"
-                                id="name"
-                                type="text"
-                                placeholder="Jane Doe"
-                                value={formData.name}
-                                onChange={handleChange}
-                                required
-                                maxLength={100}
-                            />
-                        )}
+                <form onSubmit={handleAuthSubmit} noValidate>
+                    {!isLogin && (
                         <Input
-                            label="Email Address"
-                            id="email"
-                            type="email"
-                            placeholder="jane@example.com"
-                            value={formData.email}
+                            label="Full Name"
+                            id="name"
+                            type="text"
+                            placeholder="Jane Doe"
+                            value={formData.name}
                             onChange={handleChange}
                             required
-                            maxLength={200}
-                        />
-                        <Input
-                            label="Password"
-                            id="password"
-                            type="password"
-                            placeholder="••••••••"
-                            value={formData.password}
-                            onChange={handleChange}
-                            required
-                            minLength={8}
                             maxLength={100}
                         />
-                        {!isLogin && (
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
-                                Min. 8 characters, must include a letter and a number.
-                            </p>
-                        )}
+                    )}
+                    <Input
+                        label="Username"
+                        id="username"
+                        type="text"
+                        placeholder="jane_doe"
+                        value={formData.username}
+                        onChange={handleChange}
+                        required
+                        minLength={3}
+                        maxLength={20}
+                        autoComplete="username"
+                    />
+                    <Input
+                        label="Password"
+                        id="password"
+                        type="password"
+                        placeholder="••••••••"
+                        value={formData.password}
+                        onChange={handleChange}
+                        required
+                        minLength={8}
+                        maxLength={100}
+                        autoComplete={isLogin ? 'current-password' : 'new-password'}
+                    />
+                    {!isLogin && (
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '-0.5rem', marginBottom: '1rem' }}>
+                            Min. 8 characters, must include a letter and a number.
+                        </p>
+                    )}
 
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            style={{ width: '100%', marginTop: '1rem' }}
-                            isLoading={isLoading}
-                            disabled={isLoading}
-                        >
-                            {isLogin ? 'Log In' : 'Create Account'}
-                        </Button>
-                    </form>
-                ) : (
-                    <form onSubmit={handleVerifySubmit} noValidate>
-                        <Input
-                            label="6-Digit Verification Code"
-                            id="otp"
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="123456"
-                            value={otp}
-                            onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                            required
-                            maxLength={6}
-                            style={{ textAlign: 'center', letterSpacing: '0.4rem', fontSize: '1.3rem', fontWeight: 600 }}
-                        />
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            style={{ width: '100%', marginTop: '1rem' }}
-                            isLoading={isLoading}
-                            disabled={isLoading}
-                        >
-                            Verify &amp; Log In
-                        </Button>
+                    <Button
+                        type="submit"
+                        variant="primary"
+                        style={{ width: '100%', marginTop: '1rem' }}
+                        isLoading={isLoading}
+                        disabled={isLoading}
+                    >
+                        {isLogin ? 'Log In' : 'Create Account'}
+                    </Button>
+                </form>
 
-                        {/* Resend OTP */}
-                        <div style={{ textAlign: 'center', marginTop: '1rem' }}>
-                            {resendTimer > 0 ? (
-                                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                    Resend code in <strong>{resendTimer}s</strong>
-                                </p>
-                            ) : (
-                                <button
-                                    type="button"
-                                    onClick={handleResendOtp}
-                                    style={{
-                                        background: 'none',
-                                        border: 'none',
-                                        color: 'var(--primary-color)',
-                                        cursor: 'pointer',
-                                        fontSize: '0.9rem',
-                                        fontWeight: 600,
-                                        textDecoration: 'underline',
-                                        padding: 0
-                                    }}
-                                >
-                                    Resend verification code
-                                </button>
-                            )}
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={() => { setStep('FORM'); setError(''); setInfo(''); setOtp(''); setResendTimer(0); }}
-                            style={{
-                                display: 'block',
-                                width: '100%',
-                                textAlign: 'center',
-                                marginTop: '0.75rem',
-                                background: 'none',
-                                border: 'none',
-                                color: 'var(--text-secondary)',
-                                cursor: 'pointer',
-                                fontSize: '0.9rem',
-                            }}
-                        >
-                            ← Go Back
-                        </button>
-                    </form>
-                )}
-
-                {step === 'FORM' && (
-                    <p style={{ textAlign: 'center', marginTop: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
-                        {isLogin ? "Don't have an account? " : 'Already have an account? '}
-                        <Link
-                            to={isLogin ? '/register' : '/login'}
-                            style={{ fontWeight: 600, color: 'var(--primary-color)' }}
-                        >
-                            {isLogin ? 'Sign Up' : 'Log In'}
-                        </Link>
-                    </p>
-                )}
+                <p style={{ textAlign: 'center', marginTop: '1.5rem', color: 'var(--text-secondary)', fontSize: '0.95rem' }}>
+                    {isLogin ? "Don't have an account? " : 'Already have an account? '}
+                    <Link
+                        to={isLogin ? '/register' : '/login'}
+                        style={{ fontWeight: 600, color: 'var(--primary-color)' }}
+                    >
+                        {isLogin ? 'Sign Up' : 'Log In'}
+                    </Link>
+                </p>
             </div>
         </div>
     );

@@ -18,15 +18,8 @@ services:
         generateValue: true
       - key: JWT_EXPIRES_IN
         value: 7d
-      - key: FROM_NAME
-        value: Everlink
       # Secrets you must set in the Render dashboard before first deploy:
       - key: MONGO_URI
-        sync: false
-      # Email via Brevo HTTPS API (Render free tier blocks SMTP, so this is required)
-      - key: BREVO_API_KEY
-        sync: false
-      - key: FROM_EMAIL
         sync: false
       - key: FRONTEND_URL
         sync: false

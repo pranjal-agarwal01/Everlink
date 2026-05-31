@@ -8,17 +8,18 @@ const userSchema = new mongoose.Schema({
     trim: true,
     maxlength: [100, 'Name cannot be more than 100 characters']
   },
-  email: {
+  username: {
     type: String,
-    required: [true, 'Please provide an email'],
+    required: [true, 'Please provide a username'],
     unique: true,
     trim: true,
     lowercase: true,
     index: true,
-    maxlength: [200, 'Email cannot be more than 200 characters'],
+    minlength: [3, 'Username must be at least 3 characters'],
+    maxlength: [20, 'Username cannot be more than 20 characters'],
     match: [
-      /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
-      'Please provide a valid email'
+      /^[a-z0-9_]+$/,
+      'Username may only contain lowercase letters, numbers, and underscores'
     ]
   },
   password: {
@@ -27,18 +28,7 @@ const userSchema = new mongoose.Schema({
     minlength: [8, 'Password must be at least 8 characters'],
     maxlength: [100, 'Password cannot be more than 100 characters'],
     select: false
-  },
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
-  otp: String,           // stored as HMAC-SHA256 hash (legacy: bcrypt / plaintext)
-  otpExpires: Date,
-  otpAttempts: {
-    type: Number,
-    default: 0
-  },
-  otpLockedUntil: Date
+  }
 }, { timestamps: true });
 
 // Hash password before saving
@@ -51,12 +41,6 @@ userSchema.pre('save', async function () {
 // Match user entered password to hashed password in database
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
-};
-
-// Match OTP (plain) against stored hash
-userSchema.methods.matchOtp = async function (enteredOtp) {
-  if (!this.otp) return false;
-  return await bcrypt.compare(enteredOtp, this.otp);
 };
 
 module.exports = mongoose.model('User', userSchema);

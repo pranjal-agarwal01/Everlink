@@ -14,8 +14,8 @@ function App() {
       const savedUser = localStorage.getItem('everlinkUser');
       if (savedUser) {
         const parsed = JSON.parse(savedUser);
-        // Validate: must have token, name, email
-        if (parsed && parsed.token && parsed.email) {
+        // Validate: must have token and username
+        if (parsed && parsed.token && parsed.username) {
           setUser(parsed);
         } else {
           localStorage.removeItem('everlinkUser');

@@ -31,22 +31,19 @@ Start backend first (port 5000), then frontend (port 5173). The frontend proxies
 **Entry point:** `server.js` — sets up Express, trust proxy (for Render's reverse proxy), CORS, JSON parsing, rate limiting, and mounts routes.
 
 **Route → Controller → Model flow:**
-- `src/routes/authRoutes.js` → `src/controllers/authController.js` — register, login, OTP verify, resend OTP
+- `src/routes/authRoutes.js` → `src/controllers/authController.js` — register, login
 - `src/routes/linkRoutes.js` → `src/controllers/linkController.js` — CRUD for links (all protected by JWT middleware)
 - `GET /:slug` in `server.js` → `linkController.redirectLink` — public redirect route, atomically increments click count
 
-**Auth flow:**
-1. Register → generate 6-digit OTP, hash with HMAC-SHA256, email user
-2. Verify OTP → set `isVerified = true`, issue 7-day JWT
-3. Login → if unverified, send fresh OTP; if verified, issue JWT
-4. JWT is checked in `src/middleware/authMiddleware.js` via `Authorization: Bearer <token>` header
+**Auth flow (username + password, no email):**
+1. Register → provide `name`, `username`, `password`; validate; create user; issue a 7-day JWT immediately (auto-login)
+2. Login → provide `username` + `password`; verify bcrypt password; issue JWT
+3. JWT is checked in `src/middleware/authMiddleware.js` via `Authorization: Bearer <token>` header
 
-**OTP security:** 10-min expiry, 5-attempt lockout (15 min), hashed with HMAC-SHA256. Legacy bcrypt and plaintext OTP formats are also supported in `User.matchOtp()` for backward compatibility.
-
-**Email (`src/utils/sendEmail.js`):** Uses Nodemailer with explicit IPv4 DNS resolution for `smtp.gmail.com` — this is required on Render's free tier which cannot reach IPv6. The transporter is built lazily and pooled (max 3 connections, 100 messages each). On failure, the transporter is reset so the next call gets a fresh DNS resolution.
+> Auth is username + password only. There is **no email** anywhere in the system and **no password-reset flow** — if a user forgets their password, they create a new account. This was a deliberate choice (Render's free tier blocks outbound SMTP, and email added operational friction for no benefit on this project).
 
 **Models:**
-- `User`: email (unique indexed), bcrypt password, `isVerified`, OTP fields with lockout logic
+- `User`: `name`, `username` (unique indexed, 3–20 chars, `a-z 0-9 _`), bcrypt password (`select: false`)
 - `Link`: `originalUrl`, `slug` (unique, nanoid(8) auto-generated), `user` ref, `clicks` counter
 
 ### Frontend (`frontend/`)
@@ -55,7 +52,7 @@ Start backend first (port 5000), then frontend (port 5173). The frontend proxies
 
 **Pages:**
 - `Home.jsx` — Landing/marketing page
-- `Auth.jsx` — Two-step form (login/register → OTP verification). Handles OTP resend with 60-second cooldown.
+- `Auth.jsx` — Single login/register form. On success it stores the JWT and redirects to the dashboard (no OTP step).
 - `Dashboard.jsx` — Full link management: create, edit (title, URL, slug), delete, copy short URL, view click counts
 
 **Routing:** React Router v7 with routes `/`, `/login`, `/register`, `/dashboard`. Non-authenticated users are redirected away from `/dashboard`.
@@ -70,9 +67,8 @@ Start backend first (port 5000), then frontend (port 5173). The frontend proxies
 | `PORT` | Server port (default 5000) |
 | `MONGO_URI` | MongoDB Atlas connection string |
 | `JWT_SECRET` | Secret for signing JWTs |
-| `SMTP_HOST/PORT/EMAIL/PASSWORD` | Nodemailer SMTP config |
-| `FROM_NAME/EMAIL` | Email sender info |
-| `FRONTEND_URL` | Allowed CORS origin |
+| `JWT_EXPIRES_IN` | Token lifetime (default 7d) |
+| `FRONTEND_URL` | Allowed CORS origin(s), comma-separated |
 
 **Frontend (`.env`):**
 | Variable | Purpose |
@@ -83,7 +79,8 @@ Start backend first (port 5000), then frontend (port 5173). The frontend proxies
 ## Key Implementation Details
 
 - **Atomic click counting:** `redirectLink` uses MongoDB `$inc` operator to prevent race conditions on high-traffic slugs.
-- **Slug generation:** `nanoid(8)` produces 8-character URL-safe slugs. Users can also provide custom slugs.
+- **Slug generation:** `nanoid(8)` produces 8-character URL-safe slugs. Users can also provide custom slugs. Reserved slugs (e.g. `api`, `health`) are rejected so they can't shadow real routes.
 - **Rate limiting:** Auth endpoints are limited to 20 requests per 15 minutes per IP. Express is configured with `trust proxy` so Render's reverse proxy forwards the real client IP correctly.
 - **CORS:** Whitelists `FRONTEND_URL`, `localhost:5173`, and `localhost:3000`. Requests with no `Origin` header (curl/Postman) pass through.
 - **Password policy:** Enforced both client-side and server-side — minimum 8 chars, at least one letter and one digit.
+- **Username policy:** Enforced both client-side and server-side — 3–20 chars, lowercase letters, numbers, and underscores only. Stored lowercase and unique.
